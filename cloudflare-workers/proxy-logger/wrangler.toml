@@ -1,0 +1,41 @@
+name = "proxy-logger"
+main = "src/index.js"
+compatibility_date = "2024-03-04"
+
+# === DEV MODE (default) ====================================================
+# Deploys without any custom domain: the worker is reachable at
+# https://<name>.<account>.workers.dev
+# This works even if your Cloudflare account has no domain registered.
+workers_dev = true
+
+# === CUSTOM DOMAIN MODE (optional) =========================================
+# Uncomment the lines below ONLY if you own a domain already registered
+# on Cloudflare. Comment out workers_dev (or set it to false) and replace
+# "your-domain.com" with your own domain. Without a registered domain
+# an active routes section makes the deploy fail.
+# workers_dev = false
+# routes = [
+# 	{ pattern = "*your-domain.com/*", zone_name = "your-domain.com" },
+# ]
+
+
+[vars]
+# Base path of the private log viewer (protected by USERNAME/PASSWORD)
+LOGGER_PATH = "/supersecretlongurl/"
+# Basic-auth credentials for the log viewer
+USERNAME = "admin"
+PASSWORD = "uw4yw7egsmf7es84tv5ev5"
+# Site to proxy (the "victim" in training)
+TARGET_DOMAIN = "github.com"
+HTTP_SCHEME = "https://"
+
+# KV namespace used to store the captured logs (REQUIRED for deploy).
+# 1. Create a namespace in YOUR account:
+#      npx wrangler kv namespace create LOGS
+# 2. Paste the printed "id" below (replace the zeros).
+# Do NOT commit a real id: students would then connect to someone else's KV.
+# The deploy fails with "KV namespace ... not found" until a real id is set.
+[[kv_namespaces]]
+binding = "LOGS"
+id = "00000000000000000000000000000000"
+
