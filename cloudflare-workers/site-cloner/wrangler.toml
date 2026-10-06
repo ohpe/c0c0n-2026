@@ -1,0 +1,24 @@
+name = "mirrorman"  # Changeme
+main = "src/index.js"
+compatibility_date = "2024-03-04"
+
+# === DEV MODE (default) ====================================================
+# Deploys without any custom domain: the worker is reachable at
+# https://<name>.<account>.workers.dev
+# This works even if your Cloudflare account has no domain registered.
+workers_dev = true
+
+# === CUSTOM DOMAIN MODE (optional) =========================================
+# Uncomment the lines below ONLY if you own a domain already registered
+# on Cloudflare. Comment out workers_dev (or set it to false) and replace
+# "<your-domain.com>" with your own domain. Without a registered domain
+# an active routes section makes the deploy fail.
+# workers_dev = false
+# routes = [
+# 	{ pattern = "*your-domain.com/*", zone_name = "your-domain.com" },
+# ]
+
+[vars]
+TARGET_DOMAIN = "github.com"
+HTTP_SCHEME = "http://"
+
