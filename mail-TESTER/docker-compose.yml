@@ -1,0 +1,23 @@
+services:
+  mail-tester:
+    build: .
+    ports:
+      - "${MAILTESTER_SMTP_PORT:-2525}:2525"
+      - "${MAILTESTER_WEB_PORT:-3000}:31337"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      - MAILTESTER_SMTP_HOST=0.0.0.0
+      - MAILTESTER_WEB_HOST=0.0.0.0
+      - MAILTESTER_WEB_PORT=31337
+      - MAILTESTER_SMTP_PORT=2525
+      # When Ollama runs on the host, the container reaches it via
+      # host.docker.internal instead of localhost.
+      # Rancher Desktop: host.docker.internal doesn't reach host services.
+      # Set MAILTESTER_OLLAMA_URL in .env to your host's LAN IP instead.
+      # Docker Desktop users can use http://host.docker.internal:11434.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

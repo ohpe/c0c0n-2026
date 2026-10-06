@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Upload .eml{% endblock %}
+
+{% block content %}
+<div class="upload-page">
+    <h1>Upload Email for Analysis</h1>
+    <p>Upload a raw .eml file to analyze its deliverability score.</p>
+
+    <form id="upload-form" class="upload-form">
+        <div class="upload-area" id="drop-area">
+            <p id="drop-text">Drop .eml file here or click to browse</p>
+            <input type="file" name="file" accept=".eml" required id="file-input">
+        </div>
+        <button type="submit" class="btn btn-primary" id="submit-btn">Analyze Email</button>
+    </form>
+
+    <div id="loading-overlay" class="loading-overlay" hidden>
+        <div class="loading-card analysis-loading-card">
+            <div class="loading-fish loading-fish-school" aria-hidden="true">&#x1F41F; &#x1F420; &#x1F421;</div>
+            <div class="loading-spinner"></div>
+            <p class="loading-text">Analysis in progress&hellip;</p>
+            <p class="loading-step" id="loading-step">The server is processing the email. This may take a little while.</p>
+            <div class="analysis-progress" aria-hidden="true"><span></span></div>
+            <p class="loading-elapsed" id="loading-elapsed">Elapsed: 0s</p>
+        </div>
+    </div>
+</div>
+
+<script>
+const dropArea = document.getElementById('drop-area');
+const fileInput = document.getElementById('file-input');
+const form = document.getElementById('upload-form');
+const overlay = document.getElementById('loading-overlay');
+const submitBtn = document.getElementById('submit-btn');
+const loadingStep = document.getElementById('loading-step');
+const loadingElapsed = document.getElementById('loading-elapsed');
+
+dropArea.addEventListener('click', () => fileInput.click());
+dropArea.addEventListener('dragover', (e) => { e.preventDefault(); dropArea.classList.add('drag-over'); });
+dropArea.addEventListener('dragleave', () => dropArea.classList.remove('drag-over'));
+dropArea.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropArea.classList.remove('drag-over');
+    if (e.dataTransfer.files.length) {
+        fileInput.files = e.dataTransfer.files;
+        document.getElementById('drop-text').textContent = e.dataTransfer.files[0].name;
+    }
+});
+fileInput.addEventListener('change', () => {
+    if (fileInput.files.length)
+        document.getElementById('drop-text').textContent = fileInput.files[0].name;
+});
+
+form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!fileInput.files.length) return;
+    const controller = new AbortController();
+    const started = Date.now();
+    const elapsedTimer = setInterval(() => { loadingElapsed.textContent = `Elapsed: ${Math.floor((Date.now() - started) / 1000)}s`; }, 1000);
+    const timeout = setTimeout(() => controller.abort(), 120000);
+    overlay.hidden = false;
+    overlay.style.display = 'flex';
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Analyzing...';
+    try {
+        const fd = new FormData();
+        fd.append('file', fileInput.files[0]);
+        const resp = await fetch('/api/upload', { method: 'POST', body: fd, signal: controller.signal });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || !data.url) throw new Error(data.detail || 'Upload failed.');
+        loadingStep.textContent = 'Analysis complete — opening results...';
+        window.location.href = data.url;
+    } catch (err) {
+        overlay.hidden = true;
+        overlay.style.display = 'none';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Analyze Email';
+        alert(err.name === 'AbortError' ? 'The analysis timed out. No result was confirmed; please try again.' : (err.message || 'Network error. Is the server running?'));
+    } finally {
+        clearTimeout(timeout);
+        clearInterval(elapsedTimer);
+    }
+});
+</script>
+{% endblock %}

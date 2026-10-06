@@ -1,0 +1,41 @@
+[project]
+name = "mail-tester"
+version = "0.1.0"
+description = "Self-hosted email deliverability tester for phishing training"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "jinja2>=3.1",
+    "aiosmtpd>=1.4",
+    "dkimpy>=1.1",
+    "dnspython>=2.7",
+    "beautifulsoup4>=4.12",
+    "aiosqlite>=0.20",
+    "python-multipart>=0.0.18",
+    "ollama>=0.4",
+    "openai>=1.0",
+    "anthropic>=0.40",
+    "slowapi>=0.1.9",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["mail_tester*"]
+
+[tool.setuptools.package-data]
+mail_tester = ["templates/*.html", "static/*.css"]
+
+[project.scripts]
+mail-tester = "mail_tester.main:cli_entry"

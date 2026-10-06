@@ -1,0 +1,665 @@
+{% extends "base.html" %}
+{% block title %}Result {{ result.overall_score }}/10{% endblock %}
+
+{% set score_color = '#28a745' if result.overall_score >= 7 else '#fd7e14' if result.overall_score >= 5 else '#dc3545' %}
+{% set score_pct = result.overall_score * 10 %}
+{% set delivery_risk_pct = 100 - score_pct %}
+{% set ai_category = result.llm_analysis.category | lower if result.llm_analysis else '' %}
+{% set ai_color = '#dc3545' if ai_category in ['phishing', 'scam'] else '#fd7e14' if ai_category == 'spam' else '#ffc107' if ai_category == 'suspicious' else '#28a745' %}
+{% set ai_confidence = (result.llm_analysis.confidence * 100) if result.llm_analysis else 0 %}
+{% set ai_is_risky = ai_category in ['phishing', 'scam', 'spam', 'suspicious'] %}
+{% set ai_risk_pct = ai_confidence if ai_is_risky else 100 - ai_confidence %}
+{% set ai_risk_label = 'high risk classification' if ai_is_risky else 'low risk classification' %}
+{% set has_delivery_section = result.source == 'simulate' or (result.checks | selectattr("name", "in", ["ORIGINAL_SPF", "ORIGINAL_DKIM", "ORIGINAL_DMARC", "ORIGINAL_AUTH", "SPF_ENVELOPE", "ARC"]) | list) %}
+{% set has_network_section = result.checks | selectattr("name", "in", ["DNSBL", "RDNS"]) | list %}
+{% set has_header_section = result.checks | selectattr("name", "in", ["HEADER_CHAIN", "HEADER_REPLY_TO", "HEADER_XMAILER", "HEADER_MULTI_FROM", "HEADER_RETURN_PATH"]) | list or (result.technical_report and result.technical_report.header_findings) %}
+{% set has_content_section = result.checks | selectattr("name", "in", ["CONTENT", "HTML_TEXT_RATIO", "IMAGE_HEAVY", "BROKEN_IMAGE", "EXCESSIVE_INLINE_CSS", "FORM_IN_EMAIL", "JAVASCRIPT", "BODY"]) | list %}
+{% set has_links_section = result.checks | selectattr("name", "in", ["SHORTENED_URLS", "SUSPICIOUS_TLDS", "LINK_MISMATCH", "BROKEN_LINKS", "LINKS_OK", "LINK_REACHABILITY_SKIPPED"]) | list %}
+{% set llm_check = result.checks | selectattr("name", "equalto", "LLM") | first %}
+{% set ai_status = llm_check.status.value if llm_check else ('fail' if result.llm_analysis and result.llm_analysis.is_suspicious else 'pass') %}
+{% set has_ai_section = llm_check or result.llm_analysis or result.technical_report %}
+
+{# Macros for reusable check item rendering #}
+{% macro render_check(check) %}
+<div class="check-item check-{{ check.status.value }}">
+    <div class="check-icon">
+        {% if check.status.value == 'pass' %}&#10003;{% elif check.status.value in ['none', 'neutral'] %}&#8211;{% else %}&#10007;{% endif %}
+    </div>
+    <div class="check-body">
+        <div class="check-header">
+            <strong>{{ check.name }}</strong>
+            {% if check.score_delta != 0.0 %}
+            <span class="check-delta {{ 'positive' if check.score_delta > 0 else 'negative' }}">
+                {{ "%+.1f"|format(check.score_delta) }}
+            </span>
+            {% else %}
+            <span class="check-delta" style="color: #999">info</span>
+            {% endif %}
+        </div>
+        <div class="check-details">{{ check.details }}</div>
+        {% if check.record %}
+        <div class="check-record"><code>{{ check.record }}</code></div>
+        {% endif %}
+    </div>
+</div>
+{% endmacro %}
+
+{% block content %}
+{% if result.source == 'simulate' %}
+<div class="sim-banner">
+    &#x1F3AF; <strong>Simulation Mode</strong> &mdash; This analysis used overridden sender domain/IP, not the email's original values.
+    <a href="/simulate" class="btn btn-sm" style="margin-left: 0.5rem">Run Another</a>
+</div>
+{% endif %}
+
+<div id="rescan-overlay" class="loading-overlay rescan-overlay" hidden role="status" aria-live="polite" aria-label="Re-scanning email">
+    <div class="loading-card rescan-card">
+        <div class="rescan-fish-school" aria-hidden="true">
+            <span>&#x1F41F;</span>
+            <span>&#x1F420;</span>
+            <span>&#x1F421;</span>
+            <span>&#x1F41F;</span>
+        </div>
+        <div class="loading-spinner"></div>
+        <p class="loading-text">Re-scanning email&hellip;</p>
+        <p class="loading-step">Refreshing authentication, links, and security analysis.</p>
+    </div>
+</div>
+
+<div class="score-hero" id="result-top">
+    <div class="indicator-grid">
+        <section class="indicator-card delivery-indicator" aria-labelledby="delivery-indicator-title">
+            <div class="indicator-label" id="delivery-indicator-title">Delivery &amp; technical posture</div>
+            <div class="gauge-tile">
+                <svg class="risk-gauge risk-gauge-delivery" viewBox="0 0 220 140" width="220" height="140" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Delivery risk {{ '%.0f'|format(delivery_risk_pct) }} percent; delivery score {{ '%.1f'|format(result.overall_score) }} out of 10">
+                    <path class="risk-gauge-track" d="M 25 115 A 85 85 0 0 1 195 115" pathLength="100" fill="none" />
+                    <path class="risk-gauge-value" d="M 25 115 A 85 85 0 0 1 195 115" pathLength="100" fill="none" stroke="{{ score_color }}" stroke-dasharray="{{ delivery_risk_pct }} 100" />
+                    <text class="gauge-number" x="110" y="98" text-anchor="middle" fill="#0a1628">{{ "%.0f"|format(delivery_risk_pct) }}%</text>
+                    <text class="gauge-unit" x="110" y="119" text-anchor="middle" fill="#6c757d">risk</text>
+                    <text class="gauge-endpoint" x="22" y="134" text-anchor="start" fill="#6c757d">low</text>
+                    <text class="gauge-endpoint" x="198" y="134" text-anchor="end" fill="#6c757d">high</text>
+                </svg>
+                <div class="gauge-label">
+                    <span class="gauge-emoji" aria-hidden="true">&#x2699;&#xFE0F;</span>
+                    <strong>{{ result.rating }}</strong>
+                    <span>{{ "%.1f"|format(result.overall_score) }}/10 delivery score</span>
+                </div>
+            </div>
+            <p class="indicator-explanation">Authentication, deliverability, deterministic content and infrastructure checks. This is not a guarantee that the message is safe.</p>
+        </section>
+        <section class="indicator-card ai-indicator" aria-labelledby="ai-indicator-title">
+            <div class="indicator-label" id="ai-indicator-title">AI security assessment</div>
+            {% if result.llm_analysis %}
+            <div class="gauge-tile">
+                <svg class="risk-gauge risk-gauge-ai" viewBox="0 0 220 140" width="220" height="140" preserveAspectRatio="xMidYMid meet" role="img" aria-label="AI security risk {{ '%.0f'|format(ai_risk_pct) }} percent; {{ result.llm_analysis.category }} with {{ '%.0f'|format(ai_confidence) }} percent confidence">
+                    <path class="risk-gauge-track" d="M 25 115 A 85 85 0 0 1 195 115" pathLength="100" fill="none" />
+                    <path class="risk-gauge-value" d="M 25 115 A 85 85 0 0 1 195 115" pathLength="100" fill="none" stroke="{{ ai_color }}" stroke-dasharray="{{ ai_risk_pct }} 100" />
+                    <text class="gauge-number" x="110" y="98" text-anchor="middle" fill="#0a1628">{{ "%.0f"|format(ai_risk_pct) }}%</text>
+                    <text class="gauge-unit" x="110" y="119" text-anchor="middle" fill="#6c757d">risk</text>
+                    <text class="gauge-endpoint" x="22" y="134" text-anchor="start" fill="#6c757d">low</text>
+                    <text class="gauge-endpoint" x="198" y="134" text-anchor="end" fill="#6c757d">high</text>
+                </svg>
+                <div class="gauge-label">
+                    <span class="gauge-emoji" aria-hidden="true">&#x1F9E0;</span>
+                    <strong>{{ result.llm_analysis.category | capitalize }}</strong>
+                    <span>{{ "%.0f"|format(ai_confidence) }}% confidence &middot; {{ ai_risk_label }}</span>
+                </div>
+            </div>
+            {% else %}
+            <div class="gauge-tile">
+                <div class="risk-gauge ai-gauge-unavailable" role="img" aria-label="AI assessment unavailable"><span>—</span></div>
+                <div class="gauge-label">
+                    <span class="gauge-emoji" aria-hidden="true">&#x1F9E0;</span>
+                    <strong>Unavailable</strong>
+                    <span>configure an LLM provider</span>
+                </div>
+            </div>
+            {% endif %}
+            {% if result.llm_analysis %}<p class="indicator-provenance">Generated by {{ result.llm_analysis.provider or 'configured AI provider' }}{% if result.llm_analysis.model %} &middot; {{ result.llm_analysis.model }}{% endif %}</p><p class="indicator-explanation">Probabilistic classification from content and analysis evidence. It does not change the delivery score.</p>{% else %}<p class="indicator-explanation">AI analysis is disabled or unavailable.</p>{% endif %}
+        </section>
+    </div>
+    <p class="indicator-legend"><strong>Two different questions:</strong> delivery posture predicts technical acceptance; AI assessment estimates security risk. A message can score well on delivery and still be spam or phishing.</p>
+    <p class="score-meta">
+        From: {{ result.sender_address or '-' }}<br>
+        Subject: {{ result.subject or '(no subject)' }}<br>
+        Source: {{ result.source }} | {{ result.created_at[:19] }}
+        {% if result.client_ip %} | IP: {{ result.client_ip }}{% endif %}
+    </p>
+    <div class="score-actions">
+        <a href="/download/{{ result.id }}" class="btn btn-sm">&#x1F4E5; Download .eml</a>
+        <form method="post" action="/result/{{ result.id }}/rescan" class="inline-form rescan-form" onsubmit="return beginRescan(this)">
+            <button type="submit" class="btn btn-sm rescan-button">&#x1F50E; Re-scan</button>
+        </form>
+        <form method="post" action="/result/{{ result.id }}/delete" class="inline-form" onsubmit="return confirmDelete('{{ result.id }}')">
+            <input type="hidden" name="confirm" value="{{ result.id }}">
+            <button type="submit" class="btn btn-danger btn-sm">&#x1F5D1; Delete</button>
+        </form>
+    </div>
+    {% if rescanned %}<div class="action-message">Analysis re-scanned from the stored .eml file.</div>{% endif %}
+</div>
+
+<!-- ==================== RESULT NAVIGATION ==================== -->
+<div class="result-layout">
+    <aside class="result-sidenav" aria-label="Result sections">
+        <div class="sidenav-heading">On this page</div>
+        <nav>
+            <a href="#result-top">&#x1F4C8; Overview</a>
+            {% if has_delivery_section %}<a href="#delivery-result">&#x1F4E8; Delivery</a>{% endif %}
+            <a href="#authentication">&#x1F512; Authentication</a>
+            {% if has_network_section %}<a href="#network-dns">&#x1F310; Network</a>{% endif %}
+            {% if has_header_section %}<a href="#headers">&#x1F4DC; Headers</a>{% endif %}
+            {% if has_content_section %}<a href="#content-structure">&#x1F4DD; Content</a>{% endif %}
+            {% if has_links_section %}<a href="#links">&#x1F517; Links</a>{% endif %}
+            {% if has_ai_section %}<a href="#ai-analysis">&#x1F9E0; AI analysis</a>{% endif %}
+            <a href="#analysis-chat">&#x1F4AC; Ask AI</a>
+            {% if result.attack_surface %}<a href="#attack-surface">&#x1F3AF; Red team</a>{% endif %}
+            {% if result.recommendations %}<a href="#recommendations">&#x1F4A1; Recommendations</a>{% endif %}
+            <a href="#score-breakdown">&#x1F4CA; Breakdown</a>
+        </nav>
+    </aside>
+    <div class="result-sections">
+
+<!-- ==================== DELIVERY PREDICTION (simulation) or CHAIN (real) ==================== -->
+{% set our_spf = result.checks | selectattr("name", "equalto", "SPF") | first %}
+{% set our_dkim = result.checks | selectattr("name", "equalto", "DKIM") | first %}
+{% set our_dmarc = result.checks | selectattr("name", "equalto", "DMARC") | first %}
+{% set original_checks = result.checks | selectattr("name", "in", ["ORIGINAL_SPF", "ORIGINAL_DKIM", "ORIGINAL_DMARC", "ORIGINAL_AUTH", "SPF_ENVELOPE", "ARC"]) | list %}
+{% set orig_spf = result.checks | selectattr("name", "equalto", "ORIGINAL_SPF") | list %}
+{% set orig_dkim = result.checks | selectattr("name", "equalto", "ORIGINAL_DKIM") | list %}
+
+{% if result.source == 'simulate' %}
+{# ── SIMULATION: Will it land? ── #}
+{% set spf_pass = our_spf and our_spf.status.value == 'pass' %}
+{% set dkim_pass = our_dkim and our_dkim.status.value == 'pass' %}
+{% set dmarc_pass = our_dmarc and our_dmarc.status.value == 'pass' %}
+{% set dmarc_enforcing = our_dmarc and our_dmarc.extra.get('policy', 'none') in ['reject', 'quarantine'] %}
+{% set dmarc_policy = our_dmarc.extra.get('policy', 'none') if our_dmarc and our_dmarc.extra else 'none' %}
+{% set no_dmarc = our_dmarc and our_dmarc.status.value == 'none' %}
+
+<section class="check-section {% if dmarc_pass or no_dmarc %}chain-section{% else %}redteam-section{% endif %}" id="delivery-result">
+    <h2>{% if dmarc_pass %}&#x1F4E5; Will it land? &mdash; Likely YES{% elif no_dmarc %}&#x26A0;&#xFE0F; Will it land? &mdash; Probably YES (no DMARC){% elif dmarc_policy == 'quarantine' %}&#x1F4E7; Will it land? &mdash; Spam folder{% else %}&#x1F6AB; Will it land? &mdash; NO, blocked{% endif %}</h2>
+
+    <div class="chain-flow">
+        <div class="chain-step">
+            <div class="chain-node">&#x1F3AF;</div>
+            <div class="chain-label">Attacker</div>
+        </div>
+        <div class="chain-arrow">&rarr;</div>
+        <div class="chain-step">
+            <div class="chain-node {{ 'chain-pass' if spf_pass else 'chain-fail' }}">SPF</div>
+            <div class="chain-label">{{ 'Pass' if spf_pass else 'Fail' }}</div>
+        </div>
+        <div class="chain-arrow">&rarr;</div>
+        <div class="chain-step">
+            <div class="chain-node {{ 'chain-pass' if dkim_pass else 'chain-fail' }}">DKIM</div>
+            <div class="chain-label">{{ 'Pass' if dkim_pass else 'Fail' }}</div>
+        </div>
+        <div class="chain-arrow">&rarr;</div>
+        <div class="chain-step">
+            <div class="chain-node {{ 'chain-pass' if dmarc_pass else 'chain-neutral' if no_dmarc else 'chain-fail' }}">DMARC</div>
+            <div class="chain-label">{{ our_dmarc.status.value if our_dmarc else '?' }}</div>
+            <div class="chain-detail">p={{ dmarc_policy }}</div>
+        </div>
+        <div class="chain-arrow">&rarr;</div>
+        <div class="chain-step">
+            {% if dmarc_pass or no_dmarc %}
+            <div class="chain-node chain-pass">&#x1F4E5;</div>
+            <div class="chain-label">{{ 'Inbox' if dmarc_pass else 'Likely Inbox' }}</div>
+            {% elif dmarc_policy == 'quarantine' %}
+            <div class="chain-node chain-neutral">&#x1F4E7;</div>
+            <div class="chain-label">Spam</div>
+            {% else %}
+            <div class="chain-node chain-fail">&#x1F6AB;</div>
+            <div class="chain-label">Rejected</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="chain-note">
+        {% if not spf_pass and not dkim_pass and dmarc_enforcing %}
+        <strong>&#x1F6AB; Blocked:</strong> Both SPF and DKIM fail. DMARC p={{ dmarc_policy }} will {{ 'reject' if dmarc_policy == 'reject' else 'quarantine' }} this email. The spoofed email will NOT reach the inbox.
+        {% elif not spf_pass and not dkim_pass and no_dmarc %}
+        <strong>&#x26A0;&#xFE0F; No DMARC:</strong> SPF and DKIM both fail, but there is no DMARC policy to enforce rejection. Many mail servers will still deliver based on domain reputation, though spam filters may flag it.
+        {% elif spf_pass and dmarc_pass %}
+        <strong>&#x1F4E5; Delivered:</strong> SPF passes and DMARC alignment is satisfied. This spoofed email would likely reach the inbox.
+        {% elif dkim_pass and dmarc_pass %}
+        <strong>&#x1F4E5; Delivered:</strong> DKIM passes and DMARC alignment is satisfied. The email would be delivered.
+        {% elif not spf_pass and dmarc_enforcing %}
+        <strong>&#x1F6AB; Likely blocked:</strong> SPF fails. Without DKIM alignment, DMARC p={{ dmarc_policy }} will {{ 'reject' if dmarc_policy == 'reject' else 'quarantine' }} this email.
+        {% elif spf_pass and not dmarc_pass and dmarc_enforcing %}
+        <strong>&#x1F6AB; Blocked despite SPF pass:</strong> SPF passes but DMARC alignment fails (domain mismatch). DMARC p={{ dmarc_policy }} still blocks.
+        {% else %}
+        <strong>&#x2753; Uncertain:</strong> Delivery depends on the receiving server's policies and the domain's reputation.
+        {% endif %}
+    </div>
+</section>
+
+{% elif original_checks %}
+{# ── REAL EMAIL: Why did it land? ── #}
+<section class="check-section chain-section" id="delivery-result">
+    <h2>&#x1F4E8; Delivery Chain &mdash; Why did it land?</h2>
+    <div class="chain-explanation">
+        <div class="chain-flow">
+            <div class="chain-step">
+                <div class="chain-node">&#x2709;&#xFE0F;</div>
+                <div class="chain-label">Sender</div>
+            </div>
+            <div class="chain-arrow">&rarr;</div>
+            <div class="chain-step">
+                <div class="chain-node {% if orig_spf and orig_spf[0].status.value == 'pass' %}chain-pass{% else %}chain-fail{% endif %}">&#x1F4E1;</div>
+                <div class="chain-label">Sending MTA</div>
+                <div class="chain-detail">
+                    {% for c in original_checks if c.name == 'SPF_ENVELOPE' %}{{ c.details[:60] }}{% endfor %}
+                </div>
+            </div>
+            <div class="chain-arrow">&rarr;</div>
+            <div class="chain-step">
+                <div class="chain-node {% if orig_dkim and orig_dkim[0].status.value == 'pass' %}chain-pass{% elif orig_spf and orig_spf[0].status.value == 'pass' %}chain-pass{% else %}chain-neutral{% endif %}">&#x1F6E1;&#xFE0F;</div>
+                <div class="chain-label">Receiving MTA</div>
+                <div class="chain-detail">Evaluated auth at delivery</div>
+            </div>
+            <div class="chain-arrow">&rarr;</div>
+            <div class="chain-step">
+                <div class="chain-node">&#x1F4E5;</div>
+                <div class="chain-label">Inbox</div>
+            </div>
+        </div>
+
+        {% set has_mismatch = (our_spf.status.value != 'pass' and orig_spf and orig_spf[0].status.value == 'pass') or (our_dkim.status.value != 'pass' and orig_dkim and orig_dkim[0].status.value == 'pass') %}
+        {% if has_mismatch %}
+        <div class="chain-note">
+            <strong>&#x1F50D; Why our results differ from delivery:</strong>
+            <ul>
+                {% if our_spf.status.value != 'pass' and orig_spf and orig_spf[0].status.value == 'pass' %}
+                <li><strong>SPF:</strong> We check the <code>From:</code> domain ({{ result.sender_address }}), but the receiving server checked the <code>Return-Path</code> envelope sender &mdash; which passed.</li>
+                {% endif %}
+                {% if our_dkim.status.value != 'pass' and orig_dkim and orig_dkim[0].status.value == 'pass' %}
+                <li><strong>DKIM:</strong> The signature was valid at delivery, but broke after the email was stored (headers added/modified by your mail client).</li>
+                {% endif %}
+            </ul>
+        </div>
+        {% endif %}
+    </div>
+
+    {% for check in original_checks %}
+    {{ render_check(check) }}
+    {% endfor %}
+</section>
+{% endif %}
+
+<!-- ==================== AUTHENTICATION ==================== -->
+<details class="check-section" id="authentication" open>
+    <summary class="section-toggle"><h2>&#x1F512; Authentication</h2></summary>
+    {% for check in result.checks if check.name in ['SPF', 'DKIM', 'DMARC'] %}
+    {{ render_check(check) }}
+    {% endfor %}
+</details>
+
+<!-- ==================== NETWORK & DNS ==================== -->
+{% set net_checks = result.checks | selectattr("name", "in", ["DNSBL", "RDNS"]) | list %}
+{% if net_checks %}
+<details class="check-section" id="network-dns" open>
+    <summary class="section-toggle"><h2>&#x1F310; Network &amp; DNS</h2></summary>
+    {% for check in net_checks %}
+    {{ render_check(check) }}
+    {% endfor %}
+</details>
+{% endif %}
+
+<!-- ==================== HEADERS ==================== -->
+{% set header_names = ["HEADER_CHAIN", "HEADER_REPLY_TO", "HEADER_XMAILER", "HEADER_MULTI_FROM", "HEADER_RETURN_PATH"] %}
+{% set header_checks = result.checks | selectattr("name", "in", header_names) | list %}
+{% if header_checks or (result.technical_report and result.technical_report.header_findings) %}
+<details class="check-section" id="headers" open>
+    <summary class="section-toggle"><h2>&#x1F4DC; Headers</h2></summary>
+    {% for check in header_checks %}
+    {{ render_check(check) }}
+    {% endfor %}
+    {% if result.technical_report and result.technical_report.header_findings %}
+    <div class="technical-findings">
+        <h3>Technical header analysis</h3>
+        <p class="technical-summary">{{ result.technical_report.summary }}</p>
+        {% for finding in result.technical_report.header_findings %}
+        <div class="technical-finding technical-{{ finding.severity }}">
+            <div class="technical-finding-header">
+                <span class="severity-badge severity-{{ finding.severity }}">{{ finding.severity | upper }}</span>
+                <strong>{{ finding.title }}</strong>
+            </div>
+            <p>{{ finding.explanation }}</p>
+            {% if finding.evidence %}<p><strong>Evidence:</strong> {{ finding.evidence | join('; ') }}</p>{% endif %}
+            {% if finding.reference %}<small>Reference: {{ finding.reference }}</small>{% endif %}
+        </div>
+        {% endfor %}
+        {% if result.technical_report.received_hops %}
+        <h4>Received hop summary</h4>
+        <div class="hop-list">
+            {% for hop in result.technical_report.received_hops %}
+            <div class="hop-row">
+                <strong>#{{ hop.position }}</strong>
+                <span>from={{ hop.from_value or '?' }}</span>
+                <span>by={{ hop.by_value or '?' }}</span>
+                <span>{{ hop.timestamp or 'timestamp unavailable' }}</span>
+                {% if hop.anomalies %}<span class="technical-anomalies">{{ hop.anomalies | join(', ') }}</span>{% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+</details>
+{% endif %}
+
+<!-- ==================== CONTENT ==================== -->
+{% set content_names = ['CONTENT', 'HTML_TEXT_RATIO', 'IMAGE_HEAVY', 'BROKEN_IMAGE', 'EXCESSIVE_INLINE_CSS', 'FORM_IN_EMAIL', 'JAVASCRIPT', 'BODY'] %}
+{% set content_checks = result.checks | selectattr("name", "in", content_names) | list %}
+{% if content_checks %}
+<details class="check-section" id="content-structure" open>
+    <summary class="section-toggle"><h2>&#x1F4DD; Content &amp; Structure</h2></summary>
+    {% for check in content_checks %}
+    {{ render_check(check) }}
+    {% endfor %}
+</details>
+{% endif %}
+
+<!-- ==================== LINKS ==================== -->
+{% set link_checks = result.checks | selectattr("name", "in", ["SHORTENED_URLS", "SUSPICIOUS_TLDS", "LINK_MISMATCH", "BROKEN_LINKS", "LINKS_OK", "LINK_REACHABILITY_SKIPPED"]) | list %}
+{% if link_checks %}
+<details class="check-section" id="links" open>
+    <summary class="section-toggle"><h2>&#x1F517; Links</h2></summary>
+    {% for check in link_checks %}
+    {{ render_check(check) }}
+    {% endfor %}
+</details>
+{% endif %}
+
+<!-- ==================== AI ANALYSIS ==================== -->
+{% if has_ai_section %}
+<details class="check-section ai-analysis-section" id="ai-analysis" open>
+    <summary class="section-toggle"><h2>&#x1F9E0; AI Analysis</h2><span class="section-summary">{% if result.llm_analysis %}{{ result.llm_analysis.category | capitalize }}{% elif llm_check and llm_check.status.value == 'error' %}Unavailable{% else %}Technical evidence{% endif %}</span></summary>
+
+    {% if result.llm_analysis and llm_check %}
+    <div class="ai-summary-card ai-state-{{ ai_status }}">
+        <div class="ai-card-header">
+            <div>
+                <span class="ai-eyebrow">Model assessment</span>
+                <span class="ai-category-badge ai-category-{{ ai_category }}">{{ result.llm_analysis.category | capitalize }}</span>
+            </div>
+            <div class="ai-verdict {{ 'ai-verdict-risk' if result.llm_analysis.is_suspicious else 'ai-verdict-safe' }}">
+                <span>{{ 'Risk signal' if result.llm_analysis.is_suspicious else 'No risk signal' }}</span>
+                {% if llm_check.score_delta != 0.0 %}<strong>{{ "%+.1f"|format(llm_check.score_delta) }}</strong>{% endif %}
+            </div>
+        </div>
+        <div class="ai-confidence">
+            <div class="ai-field-label"><span>Confidence</span><strong>{{ "%.0f"|format(ai_confidence) }}%</strong></div>
+            <div class="ai-confidence-track" role="meter" aria-label="AI confidence" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ ai_confidence }}"><span style="width: {{ ai_confidence }}%"></span></div>
+        </div>
+        <div class="ai-summary-grid">
+            <div class="ai-panel ai-reasoning">
+                <div class="ai-field-label">Reasoning</div>
+                <p>{{ result.llm_analysis.reasoning }}</p>
+            </div>
+            {% if result.llm_analysis.indicators %}
+            <div class="ai-panel">
+                <div class="ai-field-label">Risk indicators</div>
+                <div class="ai-indicators">
+                    {% for indicator in result.llm_analysis.indicators %}<span class="ai-indicator-chip">{{ indicator }}</span>{% endfor %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        {% if result.technical_report %}
+        <details class="ai-evidence" open>
+            <summary><span>Deterministic technical evidence</span><span class="ai-evidence-count">{{ result.technical_report.body_findings|length + result.technical_report.header_findings|length }} findings</span></summary>
+            <p class="technical-summary">Evidence-based MIME, encoding, header, and representation review.</p>
+            <div class="ai-evidence-grid">
+                <div><h3>Body</h3>{% for finding in result.technical_report.body_findings %}<div class="ai-evidence-item technical-{{ finding.severity }}"><span class="severity-badge severity-{{ finding.severity }}">{{ finding.severity | upper }}</span><strong>{{ finding.title }}</strong><p>{{ finding.explanation }}</p>{% if finding.evidence %}<small>{{ finding.evidence | join('; ') }}</small>{% endif %}</div>{% else %}<p class="technical-summary">No body findings.</p>{% endfor %}</div>
+                <div><h3>Headers</h3>{% for finding in result.technical_report.header_findings %}<div class="ai-evidence-item technical-{{ finding.severity }}"><span class="severity-badge severity-{{ finding.severity }}">{{ finding.severity | upper }}</span><strong>{{ finding.title }}</strong><p>{{ finding.explanation }}</p>{% if finding.evidence %}<small>{{ finding.evidence | join('; ') }}</small>{% endif %}</div>{% else %}<p class="technical-summary">No header findings.</p>{% endfor %}</div>
+            </div>
+        </details>
+        {% endif %}
+
+        {% if result.llm_analysis.technical_analysis %}
+        <div class="ai-panel ai-technical-interpretation">
+            <div class="ai-field-label">AI interpretation of technical evidence</div>
+            <p>{{ result.llm_analysis.technical_analysis.summary }}</p>
+            <div class="ai-technical-columns"><p><strong>Body:</strong> {{ result.llm_analysis.technical_analysis.body }}</p><p><strong>Headers:</strong> {{ result.llm_analysis.technical_analysis.headers }}</p></div>
+            {% if result.llm_analysis.technical_analysis.findings %}<ul>{% for finding in result.llm_analysis.technical_analysis.findings %}<li>{{ finding }}</li>{% endfor %}</ul>{% endif %}
+        </div>
+        {% endif %}
+    </div>
+    {% elif llm_check and llm_check.status.value == 'none' %}
+    <div class="ai-state-message ai-state-disabled"><strong>AI analysis is disabled</strong><p>Configure an LLM provider to receive a probabilistic classification. Deterministic technical evidence is shown below when available.</p></div>
+    {% elif llm_check and llm_check.status.value == 'error' %}
+    <div class="ai-state-message ai-state-error"><strong>AI analysis could not be completed</strong><p>{{ llm_check.details }}</p><p class="ai-state-hint">The deterministic checks and any technical evidence remain valid.</p></div>
+    {% endif %}
+
+    {% if result.technical_report and not result.llm_analysis %}
+    <div class="ai-evidence ai-evidence-standalone">
+        <div class="ai-field-label">Deterministic technical evidence</div>
+        <p class="technical-summary">AI classification is unavailable; these observations are generated without an LLM.</p>
+        <div class="ai-evidence-grid">
+            <div><h3>Body</h3>{% for finding in result.technical_report.body_findings %}<div class="ai-evidence-item technical-{{ finding.severity }}"><span class="severity-badge severity-{{ finding.severity }}">{{ finding.severity | upper }}</span><strong>{{ finding.title }}</strong><p>{{ finding.explanation }}</p></div>{% else %}<p class="technical-summary">No body findings.</p>{% endfor %}</div>
+            <div><h3>Headers</h3>{% for finding in result.technical_report.header_findings %}<div class="ai-evidence-item technical-{{ finding.severity }}"><span class="severity-badge severity-{{ finding.severity }}">{{ finding.severity | upper }}</span><strong>{{ finding.title }}</strong><p>{{ finding.explanation }}</p></div>{% else %}<p class="technical-summary">No header findings.</p>{% endfor %}</div>
+        </div>
+    </div>
+    {% endif %}
+</details>
+{% endif %}
+
+<!-- ==================== ASK AI ==================== -->
+<section class="check-section chat-section" id="analysis-chat">
+    <h2>&#x1F4AC; Ask AI about this analysis</h2>
+    {% if result.llm_analysis and result.llm_analysis.provider %}<p class="chat-provenance">Chat provider: {{ result.llm_analysis.provider }}{% if result.llm_analysis.model %} &middot; {{ result.llm_analysis.model }}{% endif %}</p>{% endif %}
+    <p class="chat-notice">The conversation uses this stored analysis context only. Email URLs are never visited, downloaded, or submitted to reputation services.</p>
+    <div id="chat-messages" class="chat-messages" aria-live="polite"></div>
+    <form id="chat-form" class="chat-form">
+        <textarea id="chat-question" maxlength="2000" rows="3" placeholder="Ask why a finding is suspicious..." required></textarea>
+        <button type="submit" class="btn btn-sm" id="chat-send">Ask</button>
+    </form>
+    <p id="chat-status" class="chat-status" role="status" aria-live="polite" hidden>
+        <span class="chat-spinner" aria-hidden="true"></span>
+        AI is analyzing the context&hellip;
+    </p>
+    <p id="chat-error" class="chat-error" hidden></p>
+</section>
+<script>
+(() => {
+    const analysisId = {{ result.id | tojson }};
+    const messagesEl = document.getElementById('chat-messages');
+    const form = document.getElementById('chat-form');
+    const question = document.getElementById('chat-question');
+    const send = document.getElementById('chat-send');
+    const status = document.getElementById('chat-status');
+    const error = document.getElementById('chat-error');
+
+    function render(messages) {
+        messagesEl.replaceChildren();
+        messages.forEach((message) => {
+            const item = document.createElement('div');
+            item.className = `chat-message chat-${message.role}`;
+            const label = document.createElement('strong');
+            label.textContent = message.role === 'user' ? 'You' : 'AI';
+            const text = document.createElement('p');
+            text.textContent = message.content;
+            item.append(label, text);
+            messagesEl.appendChild(item);
+        });
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    async function load() {
+        try {
+            const response = await fetchChat(`/api/result/${encodeURIComponent(analysisId)}/chat`);
+            if (!response.ok) throw new Error('Chat history unavailable');
+            render((await response.json()).messages);
+        } catch (err) {
+            error.textContent = err.message;
+            error.hidden = false;
+        }
+    }
+
+    async function fetchChat(url, options) {
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), 75000);
+        try {
+            return await fetch(url, {...options, signal: controller.signal});
+        } catch (err) {
+            if (err.name === 'AbortError') {
+                throw new Error('The AI provider timed out. Check the provider and try again.');
+            }
+            throw err;
+        } finally {
+            window.clearTimeout(timer);
+        }
+    }
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const value = question.value.trim();
+        if (!value) return;
+        send.disabled = true;
+        send.textContent = 'Working...';
+        question.disabled = true;
+        status.hidden = false;
+        error.hidden = true;
+        try {
+            const response = await fetchChat(`/api/result/${encodeURIComponent(analysisId)}/chat`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({question: value}),
+            });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.detail || 'Chat unavailable');
+            render(payload.messages);
+            question.value = '';
+        } catch (err) {
+            error.textContent = err.message;
+            error.hidden = false;
+        } finally {
+            send.disabled = false;
+            send.textContent = 'Ask';
+            question.disabled = false;
+            status.hidden = true;
+            question.focus();
+        }
+    });
+    question.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            if (!send.disabled) form.requestSubmit();
+        }
+    });
+    load();
+})();
+</script>
+
+<!-- ==================== RED TEAM NOTES ==================== -->
+{% if result.attack_surface %}
+<details class="check-section redteam-section" id="attack-surface" open>
+    <summary class="section-toggle"><h2>&#x1F3AF; Red Team &mdash; Attack Surface</h2></summary>
+    <p class="redteam-disclaimer">For authorized security testing and training only.</p>
+
+    {% set severity_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3, 'info': 4} %}
+    {% for finding in result.attack_surface | sort(attribute='severity') %}
+    <div class="finding finding-{{ finding.severity }}">
+        <div class="finding-header">
+            <span class="severity-badge severity-{{ finding.severity }}">{{ finding.severity | upper }}</span>
+            <strong>{{ finding.title }}</strong>
+        </div>
+        <div class="finding-body">
+            <p>{{ finding.description }}</p>
+            <div class="finding-exploit">
+                <strong>&#x1F52A; Exploit:</strong>
+                <p>{{ finding.exploit }}</p>
+            </div>
+            <div class="finding-remediation">
+                <strong>&#x1F6E1;&#xFE0F; Fix:</strong>
+                <p>{{ finding.remediation }}</p>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</details>
+{% endif %}
+
+<!-- ==================== RECOMMENDATIONS ==================== -->
+{% if result.recommendations %}
+<details class="recommendations" id="recommendations" open>
+    <summary class="section-toggle"><h2>&#x1F4A1; Recommendations</h2></summary>
+    <ul>
+        {% for rec in result.recommendations %}
+        <li>{{ rec }}</li>
+        {% endfor %}
+    </ul>
+</details>
+{% endif %}
+
+<!-- ==================== SCORE BREAKDOWN ==================== -->
+<details class="check-section" id="score-breakdown" open>
+    <summary class="section-toggle"><h2>&#x1F4CA; Score Breakdown</h2></summary>
+    <table class="breakdown-table">
+        <thead><tr><th>Check</th><th>Status</th><th>Delta</th></tr></thead>
+        <tbody>
+        {% for check in result.checks if check.score_delta != 0.0 or check.name in ['SPF', 'DKIM', 'DMARC'] %}
+        <tr>
+            <td>{{ check.name }}</td>
+            <td><span class="status-pill status-{{ check.status.value }}">{{ check.status.value }}</span></td>
+            <td class="{{ 'positive' if check.score_delta > 0 else 'negative' if check.score_delta < 0 else '' }}">{{ "%+.1f"|format(check.score_delta) }}</td>
+        </tr>
+        {% endfor %}
+        <tr class="breakdown-total">
+            <td><strong>Total</strong></td>
+            <td></td>
+            <td><strong>{{ "%+.1f"|format(result.checks | map(attribute='score_delta') | sum) }}</strong> (base 5.0 &rarr; {{ "%.1f"|format(result.overall_score) }})</td>
+        </tr>
+        </tbody>
+    </table>
+</details>
+
+<div class="result-footer">
+    <p>Analysis ID: <code>{{ result.id }}</code></p>
+</div>
+    </div>
+</div>
+<script>
+(() => {
+    const links = [...document.querySelectorAll('.result-sidenav a[href^="#"]')];
+    const sections = links
+        .map((link) => document.getElementById(link.hash.slice(1)))
+        .filter(Boolean);
+
+    function updateActiveLink() {
+        const marker = window.scrollY + 120;
+        let current = sections[0];
+        for (const section of sections) {
+            if (section.offsetTop <= marker) current = section;
+        }
+        links.forEach((link) => link.classList.toggle('active', link.hash === `#${current.id}`));
+    }
+
+    links.forEach((link) => link.addEventListener('click', () => {
+        const target = document.getElementById(link.hash.slice(1));
+        if (target instanceof HTMLDetailsElement) target.open = true;
+    }));
+    window.addEventListener('scroll', updateActiveLink, {passive: true});
+    updateActiveLink();
+})();
+
+function beginRescan(form) {
+    if (!window.confirm('Re-scan this stored email? The result may change after analysis updates.')) return false;
+    const overlay = document.getElementById('rescan-overlay');
+    const button = form.querySelector('.rescan-button');
+    if (overlay) overlay.hidden = false;
+    if (button) {
+        button.disabled = true;
+        button.textContent = 'Re-scanning...';
+    }
+    return true;
+}
+
+function confirmDelete(id) {
+    return window.confirm('Delete analysis ' + id + '? This also removes its stored .eml file.');
+}
+</script>
+{% endblock %}

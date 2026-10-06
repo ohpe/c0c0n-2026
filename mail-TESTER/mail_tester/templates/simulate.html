@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Simulate{% endblock %}
+
+{% block content %}
+<div class="simulate-page">
+    <h1>&#x1F3AF; Spoofing Simulator</h1>
+    <p>Upload an .eml and test: <strong>"What if I send this as someone else?"</strong></p>
+    <p class="sim-hint">Override the sender domain, IP, or envelope sender to see how the target domain's email authentication would handle it.</p>
+
+    <form id="sim-form" class="sim-form">
+        <div class="upload-area" id="drop-area">
+            <p id="drop-text">Drop .eml file here or click to browse</p>
+            <input type="file" name="file" accept=".eml" required id="file-input">
+        </div>
+
+        <div class="sim-fields">
+            <div class="sim-field">
+                <label for="from_domain">From Domain (spoof as)</label>
+                <input type="text" id="from_domain" name="from_domain" placeholder="e.g. paypal.com, google.com, yourcompany.com">
+                <span class="sim-field-hint">Changes which domain's SPF/DKIM/DMARC gets evaluated</span>
+            </div>
+
+            <div class="sim-field">
+                <label for="sending_ip">Sending IP (optional)</label>
+                <input type="text" id="sending_ip" name="sending_ip" placeholder="e.g. 1.2.3.4 — your mail server IP">
+                <span class="sim-field-hint">IP checked against the target domain's SPF record</span>
+            </div>
+
+            <div class="sim-field">
+                <label for="envelope_domain">Envelope Domain (optional)</label>
+                <input type="text" id="envelope_domain" name="envelope_domain" placeholder="e.g. bounce.paypal.com — Return-Path domain">
+                <span class="sim-field-hint">Overrides the Return-Path for envelope SPF check</span>
+            </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary" id="submit-btn">&#x1F3A3; Run Simulation</button>
+    </form>
+
+    <div class="sim-scenarios">
+        <h2>Quick Scenarios</h2>
+        <div class="scenario-cards">
+            <div class="scenario-card" onclick="fillScenario('paypal.com', '', '')">
+                <strong>Spoof PayPal</strong>
+                <span>Test paypal.com's DMARC/SPF posture</span>
+            </div>
+            <div class="scenario-card" onclick="fillScenario('google.com', '', '')">
+                <strong>Spoof Google</strong>
+                <span>Test google.com auth chain</span>
+            </div>
+            <div class="scenario-card" onclick="fillScenario('', '185.70.40.1', '')">
+                <strong>Send from ProtonMail IP</strong>
+                <span>Check if a ProtonMail IP passes SPF</span>
+            </div>
+            <div class="scenario-card" onclick="fillScenario('microsoft.com', '', 'bounces.microsoft.com')">
+                <strong>Microsoft + subdomain envelope</strong>
+                <span>Test relaxed alignment bypass</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="loading-overlay" class="loading-overlay" hidden>
+        <div class="loading-card analysis-loading-card">
+            <div class="loading-fish loading-fish-school" aria-hidden="true">&#x1F41F; &#x1F420; &#x1F421;</div>
+            <div class="loading-spinner"></div>
+            <p class="loading-text">Simulation in progress&hellip;</p>
+            <p class="loading-step" id="loading-step">The server is processing the email. This may take a little while.</p>
+            <div class="analysis-progress" aria-hidden="true"><span></span></div>
+            <p class="loading-elapsed" id="loading-elapsed">Elapsed: 0s</p>
+        </div>
+    </div>
+</div>
+
+<script>
+const dropArea = document.getElementById('drop-area');
+const fileInput = document.getElementById('file-input');
+const form = document.getElementById('sim-form');
+const overlay = document.getElementById('loading-overlay');
+const submitBtn = document.getElementById('submit-btn');
+const loadingStep = document.getElementById('loading-step');
+const loadingElapsed = document.getElementById('loading-elapsed');
+
+dropArea.addEventListener('click', () => fileInput.click());
+dropArea.addEventListener('dragover', (e) => { e.preventDefault(); dropArea.classList.add('drag-over'); });
+dropArea.addEventListener('dragleave', () => dropArea.classList.remove('drag-over'));
+dropArea.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropArea.classList.remove('drag-over');
+    if (e.dataTransfer.files.length) {
+        fileInput.files = e.dataTransfer.files;
+        document.getElementById('drop-text').textContent = e.dataTransfer.files[0].name;
+    }
+});
+fileInput.addEventListener('change', () => {
+    if (fileInput.files.length)
+        document.getElementById('drop-text').textContent = fileInput.files[0].name;
+});
+
+function fillScenario(domain, ip, envelope) {
+    document.getElementById('from_domain').value = domain;
+    document.getElementById('sending_ip').value = ip;
+    document.getElementById('envelope_domain').value = envelope;
+}
+
+form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!fileInput.files.length) { alert('Please select an .eml file'); return; }
+    const controller = new AbortController();
+    const started = Date.now();
+    const elapsedTimer = setInterval(() => { loadingElapsed.textContent = `Elapsed: ${Math.floor((Date.now() - started) / 1000)}s`; }, 1000);
+    const timeout = setTimeout(() => controller.abort(), 120000);
+    overlay.hidden = false;
+    overlay.style.display = 'flex';
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Running simulation...';
+    try {
+        const fd = new FormData();
+        fd.append('file', fileInput.files[0]);
+        fd.append('from_domain', document.getElementById('from_domain').value);
+        fd.append('sending_ip', document.getElementById('sending_ip').value);
+        fd.append('envelope_domain', document.getElementById('envelope_domain').value);
+        const resp = await fetch('/api/simulate', { method: 'POST', body: fd, signal: controller.signal });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || !data.url) throw new Error(data.detail || 'Simulation failed.');
+        loadingStep.textContent = 'Simulation complete — opening results...';
+        window.location.href = data.url;
+    } catch (err) {
+        overlay.hidden = true;
+        overlay.style.display = 'none';
+        submitBtn.disabled = false;
+        submitBtn.textContent = '&#x1F3A3; Run Simulation';
+        alert(err.name === 'AbortError' ? 'The simulation timed out. No result was confirmed; please try again.' : (err.message || 'Network error.'));
+    } finally {
+        clearTimeout(timeout);
+        clearInterval(elapsedTimer);
+    }
+});
+</script>
+{% endblock %}

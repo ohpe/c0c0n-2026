@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+
+{% block content %}
+<div class="hero">
+    <h1>Email Deliverability Tester</h1>
+    <p>Send a test email and get your score</p>
+
+    <div class="smtp-box">
+        <h2>Your Test Address</h2>
+        <code class="smtp-address" id="smtp-addr">test@{{ smtp_domain }}</code>
+        <button class="btn btn-sm" onclick="navigator.clipboard.writeText(document.getElementById('smtp-addr').textContent)">Copy</button>
+        <p class="smtp-hint">
+            <code>swaks --to test@{{ smtp_domain }} --server {{ smtp_domain }}{% if smtp_port != 25 %}:{{ smtp_port }}{% endif %} --from you@yourdomain.com</code>
+        </p>
+    </div>
+
+    <div class="upload-inline">
+        <p>Or upload an .eml file:</p>
+        <form id="inline-upload-form" class="upload-form-inline">
+            <input type="file" name="file" accept=".eml" required id="inline-file">
+            <button type="submit" class="btn" id="inline-btn">Analyze</button>
+        </form>
+    </div>
+</div>
+
+<!-- Loading overlay (shared with upload page) -->
+<div id="loading-overlay" class="loading-overlay" hidden>
+    <div class="loading-card analysis-loading-card">
+        <div class="loading-fish loading-fish-school" aria-hidden="true">&#x1F41F; &#x1F420; &#x1F421;</div>
+        <div class="loading-spinner"></div>
+        <p class="loading-text">Analysis in progress&hellip;</p>
+        <p class="loading-step" id="loading-step">The server is processing the email. This may take a little while.</p>
+        <div class="analysis-progress" aria-hidden="true"><span></span></div>
+        <p class="loading-elapsed" id="loading-elapsed">Elapsed: 0s</p>
+    </div>
+</div>
+
+<section class="recent-results">
+    <div class="recent-header">
+        <div>
+            <h2>Recent Analyses <span id="refresh-indicator" class="refresh-dot"></span></h2>
+            <p id="refresh-status" class="refresh-status" role="status" aria-live="polite">Live updates enabled</p>
+        </div>
+        <a href="/history" class="btn btn-sm recent-history-link">View full history &rarr;</a>
+    </div>
+    <div id="results-body" class="results-table-wrap">
+    {% if recent_analyses %}
+    <table class="results-table" aria-label="Recent analyses">
+        <thead>
+            <tr><th>Score</th><th>Rating</th><th>From</th><th>Subject</th><th>Source</th><th>Analyzed</th></tr>
+        </thead>
+        <tbody>
+            {% for a in recent_analyses %}
+            <tr onclick="location.href='/result/{{ a.id }}'" class="clickable">
+                <td><span class="score-badge score-{{ 'good' if a.overall_score >= 7 else 'avg' if a.overall_score >= 5 else 'bad' }}">{{ "%.1f"|format(a.overall_score) }}</span></td>
+                <td><strong>{{ a.rating }}</strong></td>
+                <td class="table-truncate" title="{{ a.sender_address or '-' }}">{{ a.sender_address or '-' }}</td>
+                <td class="table-truncate" title="{{ a.subject or '(no subject)' }}">{{ a.subject or '(no subject)' }}</td>
+                <td><span class="source-badge">{{ a.source }}</span></td>
+                <td class="table-time">{{ a.created_at[:19].replace('T', ' ') }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="empty-state">No analyses yet. Send a test email or upload an .eml file to get started.</p>
+    {% endif %}
+    </div>
+</section>
+
+<script>
+/* ── Polling for new or updated results ── */
+const resultsBody = document.getElementById('results-body');
+const refreshIndicator = document.getElementById('refresh-indicator');
+const refreshStatus = document.getElementById('refresh-status');
+let lastSignature = rowSignature([
+    {% for a in recent_analyses %}
+    {id: {{ a.id | tojson }}, overall_score: {{ a.overall_score | tojson }}, rating: {{ a.rating | tojson }}, created_at: {{ a.created_at | tojson }}, sender_address: {{ (a.sender_address or '') | tojson }}, subject: {{ (a.subject or '') | tojson }}, source: {{ a.source | tojson }}}{% if not loop.last %},{% endif %}
+    {% endfor %}
+]);
+
+function rowSignature(rows) {
+    return rows.map((row) => [row.id, row.overall_score, row.rating, row.created_at, row.sender_address, row.subject, row.source].join('~')).join('|');
+}
+function scoreClass(score) { return score >= 7 ? 'good' : score >= 5 ? 'avg' : 'bad'; }
+function textCell(value, className, title) {
+    const cell = document.createElement('td');
+    cell.className = className || '';
+    cell.textContent = value || '-';
+    if (title) cell.title = title;
+    return cell;
+}
+function renderRecentRows(rows) {
+    const table = document.createElement('table');
+    table.className = 'results-table';
+    table.setAttribute('aria-label', 'Recent analyses');
+    table.innerHTML = '<thead><tr><th>Score</th><th>Rating</th><th>From</th><th>Subject</th><th>Source</th><th>Analyzed</th></tr></thead>';
+    const tbody = document.createElement('tbody');
+    rows.forEach((row) => {
+        const tr = document.createElement('tr');
+        tr.className = 'clickable row-updated';
+        tr.addEventListener('click', () => { window.location.href = `/result/${encodeURIComponent(row.id)}`; });
+        const score = document.createElement('span');
+        score.className = `score-badge score-${scoreClass(Number(row.overall_score))}`;
+        score.textContent = Number(row.overall_score || 0).toFixed(1);
+        const scoreCell = document.createElement('td'); scoreCell.appendChild(score); tr.appendChild(scoreCell);
+        const ratingCell = document.createElement('td'); const rating = document.createElement('strong'); rating.textContent = row.rating || '-'; ratingCell.appendChild(rating); tr.appendChild(ratingCell);
+        tr.append(textCell(row.sender_address, 'table-truncate', row.sender_address || '-'));
+        tr.append(textCell(row.subject || '(no subject)', 'table-truncate', row.subject || '(no subject)'));
+        const sourceCell = document.createElement('td'); const source = document.createElement('span'); source.className = 'source-badge'; source.textContent = row.source || '-'; sourceCell.appendChild(source); tr.appendChild(sourceCell);
+        tr.append(textCell((row.created_at || '').slice(0, 19).replace('T', ' '), 'table-time'));
+        tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    resultsBody.replaceChildren(table);
+}
+async function pollResults() {
+    try {
+        const resp = await fetch('/api/results?limit=20', {cache: 'no-store'});
+        if (!resp.ok) throw new Error('refresh failed');
+        const data = await resp.json();
+        const signature = rowSignature(data);
+        if (signature !== lastSignature) {
+            lastSignature = signature;
+            renderRecentRows(data);
+            refreshStatus.textContent = 'Updated just now';
+        } else {
+            refreshStatus.textContent = 'Live updates enabled';
+        }
+        refreshIndicator.classList.add('pulse');
+        setTimeout(() => refreshIndicator.classList.remove('pulse'), 500);
+    } catch (e) {
+        refreshStatus.textContent = 'Unable to refresh; showing the last update';
+    }
+}
+setInterval(pollResults, 5000);
+
+/* ── Async upload with honest request-lifecycle feedback ── */
+
+document.getElementById('inline-upload-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fileInput = document.getElementById('inline-file');
+    if (!fileInput.files.length) return;
+
+    const overlay = document.getElementById('loading-overlay');
+    const btn = document.getElementById('inline-btn');
+    const stepEl = document.getElementById('loading-step');
+    const elapsedEl = document.getElementById('loading-elapsed');
+    const controller = new AbortController();
+    const started = Date.now();
+    const elapsedTimer = setInterval(() => { elapsedEl.textContent = `Elapsed: ${Math.floor((Date.now() - started) / 1000)}s`; }, 1000);
+    const timeout = setTimeout(() => controller.abort(), 120000);
+    overlay.hidden = false;
+    overlay.style.display = 'flex';
+    btn.disabled = true;
+    btn.textContent = 'Analyzing...';
+
+    try {
+        const fd = new FormData();
+        fd.append('file', fileInput.files[0]);
+        const resp = await fetch('/api/upload', { method: 'POST', body: fd, signal: controller.signal });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || !data.url) throw new Error(data.detail || 'Analysis failed.');
+        stepEl.textContent = 'Analysis complete — opening results...';
+        window.location.href = data.url;
+    } catch (err) {
+        const message = err.name === 'AbortError' ? 'The analysis timed out. No result was confirmed; please try again.' : (err.message || 'Network error. Is the server running?');
+        overlay.hidden = true;
+        overlay.style.display = 'none';
+        btn.disabled = false;
+        btn.textContent = 'Analyze';
+        alert(message);
+    } finally {
+        clearTimeout(timeout);
+        clearInterval(elapsedTimer);
+    }
+});
+</script>
+{% endblock %}

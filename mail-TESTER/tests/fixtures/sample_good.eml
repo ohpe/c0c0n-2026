@@ -1,0 +1,35 @@
+From: sender@example.com
+To: test@mail-tester.phishing.click
+Subject: Monthly Newsletter - February 2026
+Date: Wed, 19 Feb 2026 10:00:00 +0000
+Message-ID: <abc123@example.com>
+MIME-Version: 1.0
+List-Unsubscribe: <mailto:unsubscribe@example.com>
+Content-Type: multipart/alternative; boundary="boundary123"
+
+--boundary123
+Content-Type: text/plain; charset="UTF-8"
+
+Hello,
+
+Here is your monthly newsletter update. We have some exciting news to share
+with you about our product improvements.
+
+Best regards,
+The Team
+
+--boundary123
+Content-Type: text/html; charset="UTF-8"
+
+<html>
+<body>
+<h1>Monthly Newsletter</h1>
+<p>Hello,</p>
+<p>Here is your monthly newsletter update. We have some exciting news to share
+with you about our product improvements.</p>
+<p>Best regards,<br>The Team</p>
+<p><a href="https://example.com/unsubscribe">Unsubscribe</a></p>
+</body>
+</html>
+
+--boundary123--

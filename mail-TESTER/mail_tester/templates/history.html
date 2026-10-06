@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}History{% endblock %}
+
+{% block content %}
+<div class="history-header">
+    <h1>Analysis History</h1>
+    {% if analyses %}
+    <form method="post" action="/history/clear" onsubmit="return confirmClearHistory()" class="history-clear-form">
+        <input type="hidden" name="confirm" value="CLEAR HISTORY">
+        <button type="submit" class="btn btn-danger btn-sm">Clear history</button>
+    </form>
+    {% endif %}
+</div>
+{% if deleted %}<div class="action-message">Analysis deleted.</div>{% endif %}
+{% if cleared %}<div class="action-message">History cleared.</div>{% endif %}
+<p id="history-action-status" class="action-message" hidden role="status" aria-live="polite"></p>
+
+{% if analyses %}
+<table class="results-table">
+    <thead>
+        <tr>
+            <th>Score</th>
+            <th>Rating</th>
+            <th>From</th>
+            <th>Subject</th>
+            <th>Source</th>
+            <th>Time</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for a in analyses %}
+        <tr onclick="location.href='/result/{{ a.id }}'" class="clickable">
+            <td>
+                <span class="score-badge score-{{ 'good' if a.overall_score >= 7 else 'avg' if a.overall_score >= 5 else 'bad' }}">
+                    {{ "%.1f"|format(a.overall_score) }}
+                </span>
+            </td>
+            <td class="rating-cell">{{ a.rating }}</td>
+            <td>{{ a.sender_address or '-' }}</td>
+            <td>{{ a.subject or '(no subject)' }}</td>
+            <td><span class="source-badge">{{ a.source }}</span></td>
+            <td>{{ a.created_at[:19] }}</td>
+            <td class="row-actions" onclick="event.stopPropagation()">
+                <form method="post" action="/result/{{ a.id }}/rescan" class="inline-form rescan-form" onsubmit="return beginHistoryRescan(event, this)">
+                    <button type="submit" class="btn btn-sm rescan-button">Re-scan</button>
+                </form>
+                <form method="post" action="/result/{{ a.id }}/delete" class="inline-form" onsubmit="return confirmDelete('{{ a.id }}')">
+                    <input type="hidden" name="confirm" value="{{ a.id }}">
+                    <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<div class="pagination">
+    {% if page > 1 %}
+    <a href="/history?page={{ page - 1 }}" class="btn btn-sm">&laquo; Previous</a>
+    {% endif %}
+    <span>Page {{ page }}</span>
+    {% if analyses | length == 20 %}
+    <a href="/history?page={{ page + 1 }}" class="btn btn-sm">Next &raquo;</a>
+    {% endif %}
+</div>
+{% else %}
+<p class="empty-state">No analyses yet.</p>
+{% endif %}
+<div id="rescan-overlay" class="loading-overlay rescan-overlay" hidden role="status" aria-live="polite" aria-label="Re-scanning email">
+    <div class="loading-card rescan-card">
+        <div class="rescan-fish-school" aria-hidden="true">
+            <span>&#x1F41F;</span>
+            <span>&#x1F420;</span>
+            <span>&#x1F421;</span>
+            <span>&#x1F41F;</span>
+        </div>
+        <div class="loading-spinner"></div>
+        <p class="loading-text">Re-scanning email&hellip;</p>
+        <p class="loading-step">Refreshing authentication, links, and security analysis.</p>
+    </div>
+</div>
+<script>
+async function beginHistoryRescan(event, form) {
+    event.preventDefault();
+    if (!window.confirm('Re-scan this stored email? The result may change after analysis updates.')) return false;
+    const overlay = document.getElementById('rescan-overlay');
+    const button = form.querySelector('.rescan-button');
+    const row = form.closest('tr');
+    const status = document.getElementById('history-action-status');
+    const analysisId = form.action.split('/result/')[1].split('/')[0];
+    if (overlay) overlay.hidden = false;
+    if (button) { button.disabled = true; button.textContent = 'Re-scanning...'; }
+    try {
+        const response = await fetch(`/api/result/${encodeURIComponent(analysisId)}/rescan`, {method: 'POST'});
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.detail || 'Re-scan failed.');
+        const score = Number(payload.overall_score || 0);
+        const badge = row.querySelector('.score-badge');
+        if (badge) { badge.className = `score-badge score-${score >= 7 ? 'good' : score >= 5 ? 'avg' : 'bad'}`; badge.textContent = score.toFixed(1); }
+        const rating = row.querySelector('.rating-cell');
+        if (rating) rating.textContent = payload.rating || '-';
+        row.classList.add('row-updated');
+        setTimeout(() => row.classList.remove('row-updated'), 1800);
+        status.textContent = `Re-scan complete. Updated score: ${score.toFixed(1)}/10.`;
+        status.hidden = false;
+    } catch (error) {
+        status.textContent = error.message || 'Re-scan failed.';
+        status.hidden = false;
+        status.classList.add('action-error');
+    } finally {
+        if (overlay) overlay.hidden = true;
+        if (button) { button.disabled = false; button.textContent = 'Re-scan'; }
+    }
+    return false;
+}
+function confirmDelete(id) {
+    return window.confirm('Delete analysis ' + id + '? This also removes its stored .eml file.');
+}
+function confirmClearHistory() {
+    return window.confirm('Delete ALL analysis history and stored .eml files?');
+}
+</script>
+{% endblock %}
