@@ -42,4 +42,4 @@ USER_REDIRECT = "https://example.com"
 #   "Chrome"                     -> any Chrome/Chromium UA
 #   "headless|phantom|selenium"  -> common automation/sandbox markers
 #   "bot|crawler|spider"         -> crawlers
-UA_PATTERN = ""
+UA_PATTERN = "chrome"
