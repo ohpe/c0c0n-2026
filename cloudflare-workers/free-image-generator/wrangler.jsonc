@@ -1,0 +1,34 @@
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "free-image-generator",
+	"main": "src/index.js",
+	"compatibility_date": "2026-09-25",
+	"workers_dev": true,
+	"observability": {
+		"enabled": true
+	},
+	"upload_source_maps": true,
+	
+	/**
+	 * Workers AI Binding
+	 */
+	"ai": {
+		"binding": "AI_BINDING"
+	},
+
+	/**
+	 * Secrets Configuration Property
+	 * Dichiara le chiavi segrete obbligatorie per il corretto funzionamento.
+	 * Wrangler verificherà la presenza di API_KEY prima del deploy.
+	 *
+	 * Use:
+	 *  npx wrangler secret put API_KEY --config wrangler.jsonc           
+	 */
+	"secrets": {
+		"required": ["API_KEY"]
+	}
+}
