@@ -9,7 +9,7 @@
 [necrobrowser]
   enable = true
   endpoint = "http://127.0.0.1:3000/instrument"
-  profile = "./config/instrument.necro"
+  profile = "./config/instrument.necro.txt"
 
   [necrobrowser.trigger]
     delay = 5
